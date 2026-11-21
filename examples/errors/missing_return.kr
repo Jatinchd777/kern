@@ -1,0 +1,9 @@
+fn choose(x: bool) -> i32 {
+    if x {
+        return 1;
+    }
+}
+
+fn main() {
+    print(choose(true));
+}

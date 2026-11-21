@@ -1,0 +1,25 @@
+enum Status {
+    Active,
+    Inactive,
+    Pending,
+}
+
+fn describe(status: Status) {
+    match status {
+        Status::Active => print("Active"),
+        Status::Inactive => print("Inactive"),
+        Status::Pending => print("Pending"),
+    }
+}
+
+fn main() {
+    let status = Status::Active;
+    describe(status);
+
+    let pending = Status::Pending;
+    match pending {
+        Status::Active => print("not pending"),
+        Status::Inactive => print("not pending"),
+        _ => print("pending or other"),
+    }
+}

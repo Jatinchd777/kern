@@ -1,0 +1,11 @@
+enum Status {
+    Active,
+    Inactive,
+}
+
+fn main() {
+    let status = Status::Active;
+    match status {
+        Status::Active => print("active"),
+    }
+}

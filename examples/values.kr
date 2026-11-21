@@ -1,0 +1,26 @@
+fn main() {
+    let whole: i32 = -42;
+    let small: i8 = -8;
+    let unsigned: u16 = 65535;
+    let big: i64 = 9000000000;
+    let pi: f64 = 3.14159;
+    let half: f32 = 0.5;
+    let yes: bool = true;
+    let no: bool = false;
+    let letter: char = 'K';
+
+    print(whole);
+    print(small);
+    print(unsigned);
+    print(big);
+    print(pi);
+    print(half);
+    print(yes);
+    print(no);
+    print(letter);
+
+    let logic = (1 < 2) && (3 != 4);
+    let either = false || (5 >= 5);
+    print(logic);
+    print(either);
+}

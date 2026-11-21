@@ -1,0 +1,7 @@
+fn main() {
+    let name: String = "Kern";
+    let age: i32 = 15;
+    print("Hello from ");
+    print(name);
+    print(age);
+}

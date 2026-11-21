@@ -1,0 +1,36 @@
+fn main() {
+    let age: i32 = 15;
+
+    if age >= 18 {
+        print("Adult");
+    } else if age >= 13 {
+        print("Teenager");
+    } else {
+        print("Child");
+    }
+
+    let mut counter: i32 = 0;
+    while counter < 3 {
+        print(counter);
+        counter = counter + 1;
+    }
+
+    for (let mut i: i32 = 0; i < 5; i = i + 1) {
+        if i == 1 {
+            continue;
+        }
+        if i == 4 {
+            break;
+        }
+        print(i);
+    }
+
+    let mut n: i32 = 0;
+    loop {
+        n = n + 1;
+        if n == 2 {
+            break;
+        }
+    }
+    print(n);
+}
