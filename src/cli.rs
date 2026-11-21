@@ -131,7 +131,9 @@ fn command_run(args: Vec<String>) -> i32 {
             return 2;
         }
         if file.is_some() {
-            eprintln!("error: unexpected argument `{arg}`; use `--` to pass arguments to the program");
+            eprintln!(
+                "error: unexpected argument `{arg}`; use `--` to pass arguments to the program"
+            );
             return 2;
         }
         file = Some(PathBuf::from(arg));

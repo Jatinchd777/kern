@@ -59,30 +59,36 @@ impl SymbolTable {
             return Err(existing.clone());
         }
         let id = self.allocate(ty.clone());
-        self.scopes.last_mut().expect("scope stack is non-empty").insert(
-            name,
-            LocalInfo {
-                id,
-                ty,
-                mutable,
-                span,
-            },
-        );
+        self.scopes
+            .last_mut()
+            .expect("scope stack is non-empty")
+            .insert(
+                name,
+                LocalInfo {
+                    id,
+                    ty,
+                    mutable,
+                    span,
+                },
+            );
         Ok(id)
     }
 
     /// Allocates a local without adding it to a scope (used for parameters).
     pub fn declare_parameter(&mut self, name: String, ty: Type, span: Span) -> LocalId {
         let id = self.allocate(ty.clone());
-        self.scopes.last_mut().expect("scope stack is non-empty").insert(
-            name,
-            LocalInfo {
-                id,
-                ty,
-                mutable: false,
-                span,
-            },
-        );
+        self.scopes
+            .last_mut()
+            .expect("scope stack is non-empty")
+            .insert(
+                name,
+                LocalInfo {
+                    id,
+                    ty,
+                    mutable: false,
+                    span,
+                },
+            );
         id
     }
 

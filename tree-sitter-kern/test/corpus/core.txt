@@ -1,0 +1,277 @@
+==================
+Functions and values
+==================
+fn add(left: i32, right: i32) -> i32 {
+    return left + right;
+}
+
+fn main() {
+    let mut total: i32 = add(10, 20);
+    println("Result: {total}");
+}
+---
+
+(source_file
+  (function_declaration
+    (identifier)
+    (parameter
+      (identifier)
+      (primitive_type))
+    (parameter
+      (identifier)
+      (primitive_type))
+    (primitive_type)
+    (block
+      (return_statement
+        (expression
+          (binary_expression
+            (expression
+              (identifier))
+            (expression
+              (identifier)))))))
+  (function_declaration
+    (identifier)
+    (block
+      (let_statement
+        (identifier)
+        (primitive_type)
+        (expression
+          (call_expression
+            (identifier)
+            (expression
+              (literal
+                (integer_literal)))
+            (expression
+              (literal
+                (integer_literal))))))
+      (print_statement
+        (print_call
+          (expression
+            (literal
+              (string_literal
+                (interpolation
+                  (expression
+                    (identifier)))))))))))
+
+==================
+Enums and match
+==================
+enum Operators {
+    Plus,
+    Minus,
+}
+
+fn main() {
+    let mut x: i32 = 10;
+    match Operators::Plus {
+        Operators::Plus => println(x + 2),
+        Operators::Minus => println("minus"),
+        _ => println("unknown"),
+    }
+}
+---
+
+(source_file
+  (enum_declaration
+    (type_identifier)
+    (enum_variant
+      (type_identifier))
+    (enum_variant
+      (type_identifier)))
+  (function_declaration
+    (identifier)
+    (block
+      (let_statement
+        (identifier)
+        (primitive_type)
+        (expression
+          (literal
+            (integer_literal))))
+      (match_statement
+        (expression
+          (path
+            (type_identifier)
+            (type_identifier)))
+        (match_arm
+          (path
+            (type_identifier)
+            (type_identifier))
+          (print_call
+            (expression
+              (binary_expression
+                (expression
+                  (identifier))
+                (expression
+                  (literal
+                    (integer_literal)))))))
+        (match_arm
+          (path
+            (type_identifier)
+            (type_identifier))
+          (print_call
+            (expression
+              (literal
+                (string_literal)))))
+        (match_arm
+          (wildcard_pattern)
+          (print_call
+            (expression
+              (literal
+                (string_literal)))))))))
+
+==================
+Structs and loops
+==================
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let point = Point { x: 1, y: 2 };
+    for (let mut i: i32 = 0; i < 3; i = i + 1) {
+        if i == 1 {
+            println(point.x);
+        } else {
+            println(point.y);
+        }
+    }
+}
+---
+
+(source_file
+  (struct_declaration
+    (type_identifier)
+    (field_declaration
+      (identifier)
+      (primitive_type))
+    (field_declaration
+      (identifier)
+      (primitive_type)))
+  (function_declaration
+    (identifier)
+    (block
+      (let_statement
+        (identifier)
+        (expression
+          (struct_literal
+            (type_identifier)
+            (field_initializer
+              (identifier)
+              (expression
+                (literal
+                  (integer_literal))))
+            (field_initializer
+              (identifier)
+              (expression
+                (literal
+                  (integer_literal)))))))
+      (for_statement
+        (identifier)
+        (primitive_type)
+        (expression
+          (literal
+            (integer_literal)))
+        (expression
+          (binary_expression
+            (expression
+              (identifier))
+            (expression
+              (literal
+                (integer_literal)))))
+        (expression
+          (identifier))
+        (expression
+          (binary_expression
+            (expression
+              (identifier))
+            (expression
+              (literal
+                (integer_literal)))))
+        (block
+          (if_statement
+            (expression
+              (binary_expression
+                (expression
+                  (identifier))
+                (expression
+                  (literal
+                    (integer_literal)))))
+            (block
+              (print_statement
+                (print_call
+                  (expression
+                    (field_expression
+                      (expression
+                        (identifier))
+                      (identifier))))))
+            (block
+              (print_statement
+                (print_call
+                  (expression
+                    (field_expression
+                      (expression
+                        (identifier))
+                      (identifier))))))))))))
+
+==================
+Incomplete source
+==================
+fn main() {
+    let mut value: i32 =
+    println("value: {value");
+---
+
+(ERROR
+  (identifier)
+  (identifier)
+  (primitive_type)
+  (identifier)
+  (ERROR
+    (type_identifier)))
+
+========================
+Input and format strings
+========================
+fn main() {
+    let mut value: i32 = 0;
+    cin >> value;
+    println("Value: {value} | hex: {:x}", value);
+    println("Pi: {:.2}", 3.14);
+}
+---
+
+(source_file
+  (function_declaration
+    (identifier)
+    (block
+      (let_statement
+        (identifier)
+        (primitive_type)
+        (expression
+          (literal
+            (integer_literal))))
+      (cin_statement
+        (identifier))
+      (print_statement
+        (print_call
+          (expression
+            (literal
+              (string_literal
+                (interpolation
+                  (expression
+                    (identifier)))
+                (interpolation
+                  (format_specifier)))))
+          (expression
+            (identifier))))
+      (print_statement
+        (print_call
+          (expression
+            (literal
+              (string_literal
+                (interpolation
+                  (format_specifier)))))
+          (expression
+            (literal
+              (float_literal))))))))

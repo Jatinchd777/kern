@@ -1,0 +1,20 @@
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn main() {
+    let name: String = "Kern";
+    let users: i32 = 255;
+    let version: f64 = 0.1;
+
+    print("Hello");
+    print(" ");
+    println("World!");
+
+    println("Language:", name, "Version:", version);
+    println("Welcome to {name}; 10 + 20 = {10 + 20}.");
+    println("Function call result: {add(2, 3)}");
+    println("Users: {} | Hex: {:x} | Binary: {:b}", users, users, users);
+    println("Octal: {:o} | Padded: {:05}", users, users);
+    println("Version to 2 decimals: {:.2}", version);
+}

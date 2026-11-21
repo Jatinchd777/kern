@@ -1,5 +1,12 @@
+//! Typed high-level IR produced by semantic analysis and consumed by codegen.
+//!
+//! Source spans, definition IDs, and mutability markers are retained for
+//! diagnostics and future tooling even when a particular backend does not need
+//! every field yet.
+#![allow(dead_code)]
+
 use crate::diagnostics::Span;
-use crate::parser::ast::{BinaryOp, UnaryOp};
+use crate::parser::ast::{BinaryOp, FormatSpec, UnaryOp};
 use crate::semantic::types::Type;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -96,7 +103,11 @@ pub enum StmtKind {
         value: Expr,
     },
     Expr(Expr),
-    Print(Expr),
+    Print {
+        items: Vec<PrintItem>,
+        newline: bool,
+    },
+    Cin(Vec<LocalId>),
     If {
         condition: Expr,
         then_block: Block,
@@ -122,6 +133,19 @@ pub enum StmtKind {
     Match {
         scrutinee: Expr,
         arms: Vec<MatchArm>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum PrintItem {
+    Text {
+        value: String,
+        separator_before: bool,
+    },
+    Value {
+        expr: Expr,
+        format: FormatSpec,
+        separator_before: bool,
     },
 }
 

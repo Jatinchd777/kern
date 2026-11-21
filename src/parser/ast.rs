@@ -1,3 +1,7 @@
+//! Abstract syntax tree. Spans and helper accessors are kept for diagnostics
+//! and for future passes that need source locations.
+#![allow(dead_code)]
+
 use crate::diagnostics::Span;
 
 #[derive(Debug, Clone)]
@@ -85,19 +89,10 @@ pub struct TypeExpr {
 pub enum TypeExprKind {
     Unit,
     Named(String),
-    Generic {
-        name: String,
-        args: Vec<TypeExpr>,
-    },
-    Array {
-        element: Box<TypeExpr>,
-        len: usize,
-    },
+    Generic { name: String, args: Vec<TypeExpr> },
+    Array { element: Box<TypeExpr>, len: usize },
     Tuple(Vec<TypeExpr>),
-    Ref {
-        mutable: bool,
-        inner: Box<TypeExpr>,
-    },
+    Ref { mutable: bool, inner: Box<TypeExpr> },
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +121,11 @@ pub enum StmtKind {
         value: Expr,
     },
     Expr(Expr),
-    Print(Expr),
+    Print {
+        args: Vec<PrintArg>,
+        newline: bool,
+    },
+    Cin(Vec<Expr>),
     If {
         condition: Expr,
         then_block: Block,
@@ -153,6 +152,35 @@ pub enum StmtKind {
         scrutinee: Expr,
         arms: Vec<MatchArm>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum PrintArg {
+    Expr(Expr),
+    Template(Vec<TemplatePart>),
+}
+
+#[derive(Debug, Clone)]
+pub enum TemplatePart {
+    Text(String),
+    Interpolation(Expr),
+    Placeholder { format: FormatSpec, span: Span },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FormatSpec {
+    pub radix: Option<Radix>,
+    pub precision: Option<usize>,
+    pub width: Option<usize>,
+    pub zero_pad: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Radix {
+    HexLower,
+    HexUpper,
+    Binary,
+    Octal,
 }
 
 #[derive(Debug, Clone)]

@@ -215,10 +215,8 @@ impl<'a> Lexer<'a> {
     }
 
     fn push_from(&mut self, kind: TokenKind, start: usize) {
-        self.tokens.push(Token::new(
-            kind,
-            Span::new(start, self.current_offset()),
-        ));
+        self.tokens
+            .push(Token::new(kind, Span::new(start, self.current_offset())));
     }
 
     fn skip_trivia(&mut self) {
@@ -301,6 +299,8 @@ impl<'a> Lexer<'a> {
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "print" => TokenKind::Print,
+            "println" => TokenKind::Println,
+            "cin" => TokenKind::Cin,
             _ => TokenKind::Ident(text.to_string()),
         };
         self.push_from(kind, start);
@@ -344,10 +344,7 @@ impl<'a> Lexer<'a> {
                         0
                     });
                     let suffix = self.lex_suffix();
-                    self.push_from(
-                        TokenKind::Int { value, suffix },
-                        start,
-                    );
+                    self.push_from(TokenKind::Int { value, suffix }, start);
                     return;
                 }
             }
@@ -362,8 +359,7 @@ impl<'a> Lexer<'a> {
         }
 
         let mut is_float = false;
-        if self.peek_char() == Some('.') && self.peek_at(1).is_some_and(|ch| ch.is_ascii_digit())
-        {
+        if self.peek_char() == Some('.') && self.peek_at(1).is_some_and(|ch| ch.is_ascii_digit()) {
             is_float = true;
             self.bump();
             while let Some(ch) = self.peek_char() {
@@ -409,22 +405,14 @@ impl<'a> Lexer<'a> {
                 );
                 0.0
             });
-            self.push_from(
-                TokenKind::Float { value, suffix },
-                start,
-            );
+            self.push_from(TokenKind::Float { value, suffix }, start);
         } else {
             let value = number_text.parse::<u128>().unwrap_or_else(|_| {
-                self.diagnostics.error(
-                    Span::new(start, number_end),
-                    "integer literal is too large",
-                );
+                self.diagnostics
+                    .error(Span::new(start, number_end), "integer literal is too large");
                 0
             });
-            self.push_from(
-                TokenKind::Int { value, suffix },
-                start,
-            );
+            self.push_from(TokenKind::Int { value, suffix }, start);
         }
     }
 
@@ -447,6 +435,7 @@ impl<'a> Lexer<'a> {
     fn lex_string(&mut self) {
         let start = self.current_offset();
         self.bump(); // opening quote
+        let content_start = self.current_offset();
         let mut value = String::new();
         let mut terminated = false;
 
@@ -487,7 +476,13 @@ impl<'a> Lexer<'a> {
         if !terminated {
             // Still produce the token so the parser can make progress.
         }
-        self.push_from(TokenKind::Str(value), start);
+        let raw_end = if terminated {
+            self.current_offset().saturating_sub(1)
+        } else {
+            self.current_offset()
+        };
+        let raw = self.source[content_start..raw_end].to_string();
+        self.push_from(TokenKind::Str { value, raw }, start);
     }
 
     fn lex_char(&mut self) {
@@ -621,7 +616,11 @@ mod tests {
     use super::*;
 
     fn kinds(source: &str) -> Vec<TokenKind> {
-        lex(source).tokens.into_iter().map(|token| token.kind).collect()
+        lex(source)
+            .tokens
+            .into_iter()
+            .map(|token| token.kind)
+            .collect()
     }
 
     #[test]
@@ -658,7 +657,13 @@ mod tests {
     #[test]
     fn lexes_escapes_and_suffixes() {
         let tokens = kinds(r#""a\n\x41\u{1F600}" 'z' 12u8 1.5f32"#);
-        assert_eq!(tokens[0], TokenKind::Str("a\nA😀".into()));
+        assert_eq!(
+            tokens[0],
+            TokenKind::Str {
+                value: "a\nA😀".into(),
+                raw: r"a\n\x41\u{1F600}".into()
+            }
+        );
         assert_eq!(tokens[1], TokenKind::Char('z'));
         assert_eq!(
             tokens[2],
@@ -667,7 +672,9 @@ mod tests {
                 suffix: Some("u8".into())
             }
         );
-        assert!(matches!(tokens[3], TokenKind::Float { value, .. } if (value - 1.5).abs() < f64::EPSILON));
+        assert!(
+            matches!(tokens[3], TokenKind::Float { value, .. } if (value - 1.5).abs() < f64::EPSILON)
+        );
     }
 
     #[test]

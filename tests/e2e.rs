@@ -70,6 +70,53 @@ fn assert_run(source: &str, expected: &str) {
     assert_eq!(stdout(&output), expected);
 }
 
+fn assert_run_with_stdin(source: &str, input: &str, expected: &str) {
+    if !clang_available() {
+        eprintln!("skipping native execution test: clang is not available");
+        return;
+    }
+    let path = temp_source("cin", source);
+    let mut child = Command::new(kern())
+        .arg("run")
+        .arg(&path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to run kern");
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let _ = fs::remove_file(path);
+    assert!(
+        output.status.success(),
+        "compilation/run failed:\n{}",
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), expected);
+}
+
+#[test]
+fn reads_cin_values() {
+    assert_run_with_stdin(
+        r#"
+        fn main() {
+            let mut x = 0;
+            let mut y = 0;
+            cin >> x >> y;
+            println(x + y);
+        }
+        "#,
+        "10 32\n",
+        "42\n",
+    );
+}
+
 #[test]
 fn runs_arithmetic_and_variables() {
     assert_run(
@@ -77,11 +124,157 @@ fn runs_arithmetic_and_variables() {
         fn main() {
             let x = 10 + 20 * 3;
             let y = x - 5;
-            print(y);
+            println(y);
         }
+
         "#,
         "65\n",
     );
+}
+
+#[test]
+fn supports_printing_multiple_arguments_without_newline() {
+    assert_run(
+        r#"
+        fn main() {
+            let name: String = "Jatin";
+            let age: i32 = 15;
+            print("Hello,", name);
+            println("Hello,", name);
+            println("Age:", age);
+            println("Result:", 10 + 20);
+            println("Name:", name, "Age:", age);
+            print();
+            println();
+        }
+        "#,
+        "Hello, JatinHello, Jatin\nAge: 15\nResult: 30\nName: Jatin Age: 15\n\n",
+    );
+}
+
+#[test]
+fn print_supports_interpolation_and_format_specs_without_newline() {
+    assert_run(
+        r#"
+        fn main() {
+            print("Hex: {:x}", 255);
+            print(" | Result: {10 + 20}");
+            println("!");
+        }
+        "#,
+        "Hex: ff | Result: 30!\n",
+    );
+}
+
+#[test]
+fn supports_string_interpolation_and_expressions() {
+    assert_run(
+        r#"
+        fn add(a: i32, b: i32) -> i32 { return a + b; }
+        fn main() {
+            let name: String = "Jatin";
+            let age: i32 = 15;
+            println("Hello, {name}!");
+            println("You are {age} years old.");
+            println("The result is {10 + 20}.");
+            println("Call: {add(2, 3)}; {name} is {age}.");
+            println("Escaped braces: {{name}}");
+        }
+        "#,
+        "Hello, Jatin!\nYou are 15 years old.\nThe result is 30.\nCall: 5; Jatin is 15.\nEscaped braces: {name}\n",
+    );
+}
+
+#[test]
+fn supports_positional_format_specifiers() {
+    assert_run(
+        r#"
+        fn main() {
+            let number: i32 = 255;
+            let big: i64 = 4294967296;
+            let pi: f64 = 3.141592;
+            println("Hex: {:x}", number);
+            println("Hex uppercase: {:X}", number);
+            println("Binary: {:b}", number);
+            println("Octal: {:o}", number);
+            println("Pi: {:.2}", pi);
+            println("Padded: {:05}", number);
+            println("Large: {}", big);
+            println("Large hex: {:x}", big);
+        }
+        "#,
+        "Hex: ff\nHex uppercase: FF\nBinary: 11111111\nOctal: 377\nPi: 3.14\nPadded: 00255\nLarge: 4294967296\nLarge hex: 100000000\n",
+    );
+}
+
+#[test]
+fn combines_printing_and_formatting_methods() {
+    assert_run(
+        r#"
+        fn main() {
+            let name: String = "Kern";
+            let version: f64 = 0.1;
+            let users: i32 = 100;
+            println("Language:", name, "Version:", version);
+            println("Welcome to {name}, version {version}!");
+            println("Users: {} | Hex: {:x}", users, users);
+            println("Prefix:", name, "| Hex: {:x}", users);
+            println("The answer is {10 + 20}, and users = {}.", users);
+        }
+        "#,
+        "Language: Kern Version: 0.1\nWelcome to Kern, version 0.1!\nUsers: 100 | Hex: 64\nPrefix: Kern | Hex: 64\nThe answer is 30, and users = 100.\n",
+    );
+}
+
+#[test]
+fn reports_invalid_formatting_and_interpolation() {
+    for (name, source, expected) in [
+        (
+            "missing-format-arg",
+            r#"fn main() { let name = "Kern"; println("Hello {} {}", name); }"#,
+            "missing formatting argument",
+        ),
+        (
+            "extra-format-arg",
+            r#"fn main() { let name = "Kern"; let age = 1; println("Hello {}", name, age); }"#,
+            "unused formatting argument",
+        ),
+        (
+            "invalid-radix-type",
+            r#"fn main() { println("{:x}", "hello"); }"#,
+            "radix formatting requires an integer",
+        ),
+        (
+            "unknown-interpolation",
+            r#"fn main() { println("{invalid_variable}"); }"#,
+            "undefined variable `invalid_variable`",
+        ),
+        (
+            "unknown-format-spec",
+            r#"fn main() { let number = 1; println("{:q}", number); }"#,
+            "unsupported format specifier",
+        ),
+        (
+            "precision-on-integer",
+            r#"fn main() { let number = 1; println("{:.2}", number); }"#,
+            "precision formatting requires a float",
+        ),
+        (
+            "unmatched-closing-brace",
+            r#"fn main() { println("value}"); }"#,
+            "unmatched `}` in format string",
+        ),
+    ] {
+        let path = temp_source(name, source);
+        let output = run_kern(&["check", path.to_str().unwrap()]);
+        let _ = fs::remove_file(path);
+        assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+        assert!(
+            stderr(&output).contains(expected),
+            "expected {expected:?} in:\n{}",
+            stderr(&output)
+        );
+    }
 }
 
 #[test]
@@ -92,7 +285,7 @@ fn runs_functions_and_recursion() {
             if n <= 1 { return 1; }
             return n * factorial(n - 1);
         }
-        fn main() { print(factorial(5)); }
+        fn main() { println(factorial(5)); }
         "#,
         "120\n",
     );
@@ -105,20 +298,20 @@ fn runs_control_flow() {
         fn main() {
             let mut i = 0;
             while i < 3 {
-                print(i);
+                println(i);
                 i = i + 1;
             }
             for (let mut j = 0; j < 5; j = j + 1) {
                 if j == 1 { continue; }
                 if j == 4 { break; }
-                print(j);
+                println(j);
             }
             let mut n = 0;
             loop {
                 n = n + 1;
                 if n == 2 { break; }
             }
-            print(n);
+            println(n);
         }
         "#,
         "0\n1\n2\n0\n2\n3\n2\n",
@@ -141,11 +334,11 @@ fn runs_structs_and_enums() {
         fn main() {
             let origin = Point { x: 0, y: 0 };
             let p = Point { x: 3, y: 4 };
-            print(distance(origin, p));
+            println(distance(origin, p));
             let status = Status::Active;
             match status {
-                Status::Active => print("active"),
-                Status::Inactive => print("inactive"),
+                Status::Active => println("active"),
+                Status::Inactive => println("inactive"),
             }
         }
         "#,
@@ -158,13 +351,13 @@ fn runs_scalar_printing() {
     assert_run(
         r#"
         fn main() {
-            print(-42);
-            print(255u8);
-            print(3.5);
-            print(true);
-            print(false);
-            print('K');
-            print("hello");
+            println(-42);
+            println(255u8);
+            println(3.5);
+            println(true);
+            println(false);
+            println('K');
+            println("hello");
         }
         "#,
         "-42\n255\n3.5\ntrue\nfalse\nK\nhello\n",
@@ -181,12 +374,17 @@ fn main_return_value_becomes_exit_code() {
         "exit",
         r#"
         fn main() -> i32 {
-            print("exiting");
+            println("exiting");
             return 7;
         }
         "#,
     );
-    assert_eq!(output.status.code(), Some(7), "stderr:\n{}", stderr(&output));
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "stderr:\n{}",
+        stderr(&output)
+    );
     assert_eq!(stdout(&output), "exiting\n");
 }
 
@@ -223,7 +421,7 @@ fn reports_missing_return_and_non_exhaustive_match() {
         }
         fn main() {
             let status = Status::Active;
-            match status { Status::Active => print("a"), }
+            match status { Status::Active => println("a"), }
         }
         "#,
     );
@@ -312,7 +510,7 @@ fn build_creates_native_executable() {
     let source = temp_source(
         "build",
         r#"
-        fn main() { print("built"); }
+        fn main() { println("built"); }
         "#,
     );
     let executable = std::env::temp_dir().join(format!(

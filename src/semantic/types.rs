@@ -28,7 +28,6 @@ pub enum Type {
     String,
     Struct(StructId),
     Enum(EnumId),
-    Never,
     Error,
 }
 
@@ -74,11 +73,7 @@ impl Type {
     }
 
     pub fn is_scalar(&self) -> bool {
-        self.is_numeric()
-            || matches!(
-                self,
-                Type::Bool | Type::Char | Type::String | Type::Enum(_)
-            )
+        self.is_numeric() || matches!(self, Type::Bool | Type::Char | Type::String | Type::Enum(_))
     }
 
     pub fn is_error(&self) -> bool {
@@ -101,10 +96,6 @@ impl Type {
             Type::F64 => Some(64),
             _ => None,
         }
-    }
-
-    pub fn signed(&self) -> bool {
-        self.is_signed_integer()
     }
 }
 
@@ -131,7 +122,6 @@ impl fmt::Display for Type {
             Type::String => "String",
             Type::Struct(id) => return write!(f, "struct#{}", id.0),
             Type::Enum(id) => return write!(f, "enum#{}", id.0),
-            Type::Never => "!",
             Type::Error => "<error>",
         };
         f.write_str(name)

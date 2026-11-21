@@ -3,15 +3,9 @@ use crate::diagnostics::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Literals and identifiers.
-    Int {
-        value: u128,
-        suffix: Option<String>,
-    },
-    Float {
-        value: f64,
-        suffix: Option<String>,
-    },
-    Str(String),
+    Int { value: u128, suffix: Option<String> },
+    Float { value: f64, suffix: Option<String> },
+    Str { value: String, raw: String },
     Char(char),
     Ident(String),
 
@@ -34,6 +28,8 @@ pub enum TokenKind {
     True,
     False,
     Print,
+    Println,
+    Cin,
 
     // Punctuation and operators.
     Plus,
@@ -83,7 +79,7 @@ impl TokenKind {
         match self {
             TokenKind::Int { .. } => "integer literal".to_string(),
             TokenKind::Float { .. } => "floating-point literal".to_string(),
-            TokenKind::Str(_) => "string literal".to_string(),
+            TokenKind::Str { .. } => "string literal".to_string(),
             TokenKind::Char(_) => "character literal".to_string(),
             TokenKind::Ident(name) => format!("identifier `{name}`"),
             TokenKind::Eof => "end of file".to_string(),
@@ -112,6 +108,8 @@ impl TokenKind {
             TokenKind::True => "true",
             TokenKind::False => "false",
             TokenKind::Print => "print",
+            TokenKind::Println => "println",
+            TokenKind::Cin => "cin",
             TokenKind::Plus => "+",
             TokenKind::Minus => "-",
             TokenKind::Star => "*",

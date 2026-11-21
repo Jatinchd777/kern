@@ -121,10 +121,7 @@ impl Parser {
     }
 
     fn synchronize_statement(&mut self) {
-        while !matches!(
-            self.current_kind(),
-            TokenKind::Eof | TokenKind::RBrace
-        ) {
+        while !matches!(self.current_kind(), TokenKind::Eof | TokenKind::RBrace) {
             if self.eat(&TokenKind::Semi) {
                 return;
             }
@@ -194,8 +191,7 @@ impl Parser {
         let mut params = Vec::new();
         while !self.at(&TokenKind::RParen) && !matches!(self.current_kind(), TokenKind::Eof) {
             let param_start = self.span();
-            let Some((param_name, param_name_span)) =
-                self.expect_identifier("function parameter")
+            let Some((param_name, param_name_span)) = self.expect_identifier("function parameter")
             else {
                 self.skip_to_parameter_boundary();
                 continue;
@@ -255,8 +251,7 @@ impl Parser {
         let mut fields = Vec::new();
         while !self.at(&TokenKind::RBrace) && !matches!(self.current_kind(), TokenKind::Eof) {
             let field_start = self.span();
-            let Some((field_name, field_name_span)) = self.expect_identifier("struct field")
-            else {
+            let Some((field_name, field_name_span)) = self.expect_identifier("struct field") else {
                 self.synchronize_field();
                 continue;
             };
@@ -304,8 +299,7 @@ impl Parser {
         let mut variants = Vec::new();
         while !self.at(&TokenKind::RBrace) && !matches!(self.current_kind(), TokenKind::Eof) {
             let variant_start = self.span();
-            let Some((variant_name, variant_name_span)) =
-                self.expect_identifier("enum variant")
+            let Some((variant_name, variant_name_span)) = self.expect_identifier("enum variant")
             else {
                 self.synchronize_variant();
                 continue;
@@ -313,8 +307,7 @@ impl Parser {
             let mut payload = Vec::new();
             let mut end = variant_name_span;
             if self.eat(&TokenKind::LParen) {
-                while !self.at(&TokenKind::RParen)
-                    && !matches!(self.current_kind(), TokenKind::Eof)
+                while !self.at(&TokenKind::RParen) && !matches!(self.current_kind(), TokenKind::Eof)
                 {
                     let Some(ty) = self.parse_type() else {
                         self.synchronize_variant();
@@ -408,7 +401,9 @@ impl Parser {
     fn parse_statement(&mut self) -> Option<Stmt> {
         match self.current_kind() {
             TokenKind::Let => self.parse_let(true),
-            TokenKind::Print => self.parse_print(true),
+            TokenKind::Print => self.parse_print(true, false),
+            TokenKind::Println => self.parse_print(true, true),
+            TokenKind::Cin => self.parse_cin(true),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
             TokenKind::Loop => self.parse_loop(),
@@ -484,20 +479,220 @@ impl Parser {
         })
     }
 
-    fn parse_print(&mut self, require_semi: bool) -> Option<Stmt> {
-        let start = self.expect(&TokenKind::Print, "print statement")?.span;
+    fn parse_print(&mut self, require_semi: bool, newline: bool) -> Option<Stmt> {
+        let start = self.advance().span;
         self.expect(&TokenKind::LParen, "print arguments")?;
-        let value = self.parse_expression()?;
-        let mut end = self
-            .expect(&TokenKind::RParen, "print arguments")?
-            .span;
+        let mut args = Vec::new();
+        if !self.at(&TokenKind::RParen) {
+            loop {
+                args.push(self.parse_print_arg()?);
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        let mut end = self.expect(&TokenKind::RParen, "print arguments")?.span;
         if require_semi {
             if let Some(token) = self.expect(&TokenKind::Semi, "print statement") {
                 end = end.join(token.span);
             }
         }
         Some(Stmt {
-            kind: StmtKind::Print(value),
+            kind: StmtKind::Print { args, newline },
+            span: start.join(end),
+        })
+    }
+
+    fn parse_print_arg(&mut self) -> Option<PrintArg> {
+        let token = self.current().clone();
+        if let TokenKind::Str { value, raw } = token.kind {
+            self.advance();
+            if raw.contains('{') || raw.contains('}') {
+                return Some(PrintArg::Template(
+                    self.parse_template(&raw, token.span.start + 1),
+                ));
+            }
+            return Some(PrintArg::Expr(Expr {
+                kind: ExprKind::Str(value),
+                span: token.span,
+            }));
+        }
+        self.parse_expression().map(PrintArg::Expr)
+    }
+
+    fn parse_template(&mut self, raw: &str, source_offset: usize) -> Vec<TemplatePart> {
+        let mut parts = Vec::new();
+        let mut text_start = 0;
+        let mut cursor = 0;
+
+        while cursor < raw.len() {
+            if raw.as_bytes()[cursor] == b'{' && raw.as_bytes().get(cursor + 1) == Some(&b'{') {
+                cursor += 2;
+                continue;
+            }
+            if raw.as_bytes()[cursor] == b'}' && raw.as_bytes().get(cursor + 1) == Some(&b'}') {
+                cursor += 2;
+                continue;
+            }
+            if raw.as_bytes()[cursor] == b'}' {
+                self.diagnostics.error(
+                    Span::new(source_offset + cursor, source_offset + cursor + 1),
+                    "unmatched `}` in format string; use `}}` for a literal brace",
+                );
+                cursor += 1;
+                continue;
+            }
+            if raw.as_bytes()[cursor] != b'{' {
+                cursor += raw[cursor..].chars().next().unwrap().len_utf8();
+                continue;
+            }
+
+            if text_start < cursor {
+                parts.push(TemplatePart::Text(
+                    self.decode_template_text(&raw[text_start..cursor]),
+                ));
+            }
+
+            let Some(close) = find_template_close(raw, cursor + 1) else {
+                self.diagnostics.error(
+                    Span::new(source_offset + cursor, source_offset + raw.len()),
+                    "unclosed `{` in format string",
+                );
+                parts.push(TemplatePart::Text(
+                    self.decode_template_text(&raw[cursor..]),
+                ));
+                return parts;
+            };
+
+            let content = &raw[cursor + 1..close];
+            let span = Span::new(source_offset + cursor, source_offset + close + 1);
+            if content.starts_with(':') {
+                parts.push(TemplatePart::Placeholder {
+                    format: self.parse_format_spec(&content[1..], span),
+                    span,
+                });
+            } else if content.is_empty() {
+                parts.push(TemplatePart::Placeholder {
+                    format: FormatSpec::default(),
+                    span,
+                });
+            } else if let Some(expr) = self.parse_interpolation(content, source_offset + cursor + 1)
+            {
+                parts.push(TemplatePart::Interpolation(expr));
+            }
+            cursor = close + 1;
+            text_start = cursor;
+        }
+
+        if text_start < raw.len() {
+            parts.push(TemplatePart::Text(
+                self.decode_template_text(&raw[text_start..]),
+            ));
+        }
+        parts
+    }
+
+    fn decode_template_text(&mut self, raw: &str) -> String {
+        let wrapped = format!("\"{raw}\"");
+        let lexed = crate::lexer::lex(&wrapped);
+        match lexed.tokens.into_iter().next().map(|token| token.kind) {
+            Some(TokenKind::Str { value, .. }) => value.replace("{{", "{").replace("}}", "}"),
+            _ => raw.to_string(),
+        }
+    }
+
+    fn parse_interpolation(&mut self, source: &str, source_offset: usize) -> Option<Expr> {
+        let mut lexed = crate::lexer::lex(source);
+        for token in &mut lexed.tokens {
+            token.span.start += source_offset;
+            token.span.end += source_offset;
+        }
+        for mut diagnostic in lexed.diagnostics {
+            diagnostic.span.start += source_offset;
+            diagnostic.span.end += source_offset;
+            self.diagnostics.push(diagnostic);
+        }
+
+        let mut parser = Parser::new(lexed.tokens);
+        let expression = parser.parse_expression();
+        if expression.is_some() && !parser.at(&TokenKind::Eof) {
+            parser.diagnostics.error(
+                parser.span(),
+                "expected the end of an interpolation expression",
+            );
+        }
+        for diagnostic in parser.diagnostics.into_vec() {
+            self.diagnostics.push(diagnostic);
+        }
+        expression
+    }
+
+    fn parse_format_spec(&mut self, spec: &str, span: Span) -> FormatSpec {
+        let mut format = FormatSpec::default();
+        match spec {
+            "x" => format.radix = Some(Radix::HexLower),
+            "X" => format.radix = Some(Radix::HexUpper),
+            "b" => format.radix = Some(Radix::Binary),
+            "o" => format.radix = Some(Radix::Octal),
+            _ if spec.starts_with('.') => {
+                if spec.len() > 1 {
+                    match spec[1..].parse::<usize>() {
+                        Ok(precision) => format.precision = Some(precision),
+                        Err(_) => {
+                            self.diagnostics
+                                .error(span, "invalid floating-point precision specifier");
+                        }
+                    }
+                } else {
+                    self.diagnostics
+                        .error(span, "invalid floating-point precision specifier");
+                }
+            }
+            _ if spec.bytes().all(|byte| byte.is_ascii_digit()) && !spec.is_empty() => {
+                format.zero_pad = spec.starts_with('0');
+                let width = if format.zero_pad { &spec[1..] } else { spec };
+                match if width.is_empty() {
+                    Ok(0)
+                } else {
+                    width.parse::<usize>()
+                } {
+                    Ok(width) => format.width = Some(width),
+                    Err(_) => self.diagnostics.error(span, "format width is too large"),
+                }
+            }
+            _ => {
+                self.diagnostics
+                    .error(span, format!("unsupported format specifier `:{spec}`"));
+                return format;
+            }
+        }
+        format
+    }
+
+    fn parse_cin(&mut self, require_semi: bool) -> Option<Stmt> {
+        let start = self.expect(&TokenKind::Cin, "cin statement")?.span;
+        let mut targets = Vec::new();
+        self.expect(&TokenKind::Shr, "`>>`")?;
+        let (name, span) = self.expect_identifier("cin target")?;
+        targets.push(Expr {
+            kind: ExprKind::Var(name),
+            span,
+        });
+        while self.eat(&TokenKind::Shr) {
+            let (name, span) = self.expect_identifier("cin target")?;
+            targets.push(Expr {
+                kind: ExprKind::Var(name),
+                span,
+            });
+        }
+        let mut end = targets.last().map(|expr| expr.span).unwrap_or(start);
+        if require_semi {
+            if let Some(token) = self.expect(&TokenKind::Semi, "cin statement") {
+                end = end.join(token.span);
+            }
+        }
+        Some(Stmt {
+            kind: StmtKind::Cin(targets),
             span: start.join(end),
         })
     }
@@ -645,8 +840,9 @@ impl Parser {
             let body_is_block = self.at(&TokenKind::LBrace);
             let body = if body_is_block {
                 self.parse_block()?
-            } else if self.at(&TokenKind::Print) {
-                let statement = self.parse_print(false)?;
+            } else if self.at(&TokenKind::Print) || self.at(&TokenKind::Println) {
+                let newline = self.at(&TokenKind::Println);
+                let statement = self.parse_print(false, newline)?;
                 self.eat(&TokenKind::Semi);
                 let span = statement.span;
                 Block {
@@ -684,10 +880,8 @@ impl Parser {
                 continue;
             }
             if !self.at(&TokenKind::RBrace) {
-                self.diagnostics.error(
-                    self.span(),
-                    "expected `,` or `}` after match arm",
-                );
+                self.diagnostics
+                    .error(self.span(), "expected `,` or `}` after match arm");
                 self.synchronize_match_arm();
             }
         }
@@ -709,7 +903,11 @@ impl Parser {
             };
             path.push(segment);
         }
-        let end = self.tokens[self.pos.saturating_sub(1)].span;
+        let end = self
+            .tokens
+            .get(self.pos.saturating_sub(1))
+            .map(|token| token.span)
+            .unwrap_or(start);
         Some(Pattern::EnumVariant {
             path,
             span: start.join(end),
@@ -809,26 +1007,26 @@ impl Parser {
             self.expect(&TokenKind::Semi, "array type length")?;
             let length = match self.current().clone() {
                 Token {
-                    kind: TokenKind::Int { value, suffix: None },
+                    kind:
+                        TokenKind::Int {
+                            value,
+                            suffix: None,
+                        },
                     span,
                 } => {
                     self.advance();
                     match usize::try_from(value) {
                         Ok(value) => value,
                         Err(_) => {
-                            self.diagnostics.error(
-                                span,
-                                "array length does not fit in `usize`",
-                            );
+                            self.diagnostics
+                                .error(span, "array length does not fit in `usize`");
                             0
                         }
                     }
                 }
                 token => {
-                    self.diagnostics.error(
-                        token.span,
-                        "expected an integer literal for array length",
-                    );
+                    self.diagnostics
+                        .error(token.span, "expected an integer literal for array length");
                     0
                 }
             };
@@ -998,7 +1196,7 @@ impl Parser {
                     span: token.span,
                 })
             }
-            TokenKind::Str(value) => {
+            TokenKind::Str { value, .. } => {
                 self.advance();
                 Some(Expr {
                     kind: ExprKind::Str(value),
@@ -1171,6 +1369,37 @@ fn binary_operator(kind: &TokenKind) -> Option<(BinaryOp, u8)> {
     Some(result)
 }
 
+fn find_template_close(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut cursor = start;
+
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if let Some(active_quote) = quote {
+            if byte == active_quote {
+                quote = None;
+            }
+        } else {
+            match byte {
+                b'"' | b'\'' => quote = Some(byte),
+                b'{' => depth += 1,
+                b'}' if depth == 0 => return Some(cursor),
+                b'}' => depth -= 1,
+                _ => {}
+            }
+        }
+        cursor += 1;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1193,10 +1422,11 @@ mod tests {
         assert!(result.diagnostics.is_empty());
         let function = first_function(&result);
         let StmtKind::Let {
-            value: Some(Expr {
-                kind: ExprKind::Binary { op, right, .. },
-                ..
-            }),
+            value:
+                Some(Expr {
+                    kind: ExprKind::Binary { op, right, .. },
+                    ..
+                }),
             ..
         } = &function.body.statements[0].kind
         else {
@@ -1227,11 +1457,7 @@ mod tests {
             }
         "#;
         let result = parse_source(source);
-        assert!(
-            result.diagnostics.is_empty(),
-            "{:?}",
-            result.diagnostics
-        );
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
         assert_eq!(result.program.items.len(), 3);
     }
 
@@ -1248,11 +1474,7 @@ mod tests {
             }
         "#;
         let result = parse_source(source);
-        assert!(
-            result.diagnostics.is_empty(),
-            "{:?}",
-            result.diagnostics
-        );
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
     }
 
     #[test]

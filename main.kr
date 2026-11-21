@@ -1,4 +1,41 @@
+enum Operators {
+    Plus,
+    Minus,
+    Multi,
+    Divide,
+}
 
 fn main() {
-    print("hello world");
+    println("====== basic calculator ======");
+
+    let mut x: i32 = 0;
+    let mut y: i32 = 0;
+    let mut operator: char = '-';
+    let mut op: Operators = Operators::Plus;
+
+    print("Enter value of x: ");
+    cin >> x;
+
+    print("Enter value of y: ");
+    cin >> y;
+
+    print("Enter your operator (+, -, *, /): ");
+    cin >> operator;
+
+    if operator == '+' {
+        op = Operators::Plus;
+    } else if operator == '-' {
+        op = Operators::Minus;
+    } else if operator == '*' {
+        op = Operators::Multi;
+    } else if operator == '/' {
+        op = Operators::Divide;
+    }
+
+    match op {
+        Operators::Plus => println(x + y),
+        Operators::Minus => println(x - y),
+        Operators::Multi => println(x * y),
+        Operators::Divide => println(x / y),
+    }
 }

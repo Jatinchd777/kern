@@ -18,15 +18,14 @@ impl Span {
             end: self.end.max(other.end),
         }
     }
-
-    pub fn is_empty(self) -> bool {
-        self.start >= self.end
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
+    /// Reserved for non-fatal diagnostics; the current frontend reports errors
+    /// only, but keeping the severity distinction makes adding warnings simple.
+    #[allow(dead_code)]
     Warning,
 }
 
@@ -57,6 +56,7 @@ impl Diagnostic {
         }
     }
 
+    #[allow(dead_code)]
     pub fn warning(span: Span, message: impl Into<String>) -> Self {
         Self {
             severity: Severity::Warning,
@@ -104,18 +104,6 @@ impl Diagnostics {
         self.push(Diagnostic::error(span, message).with_note(note));
     }
 
-    pub fn extend(&mut self, other: impl IntoIterator<Item = Diagnostic>) {
-        self.items.extend(other);
-    }
-
-    pub fn has_errors(&self) -> bool {
-        self.items.iter().any(Diagnostic::is_error)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
     pub fn into_vec(self) -> Vec<Diagnostic> {
         self.items
     }
@@ -142,14 +130,6 @@ impl SourceFile {
             source,
             line_starts,
         }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn source(&self) -> &str {
-        &self.source
     }
 
     /// Returns a zero-based line index and one-based column.
@@ -185,13 +165,7 @@ impl SourceFile {
                 diagnostic.severity.label(),
                 diagnostic.message
             );
-            let _ = writeln!(
-                output,
-                " --> {}:{}:{}",
-                self.name,
-                line + 1,
-                column
-            );
+            let _ = writeln!(output, " --> {}:{}:{}", self.name, line + 1, column);
             let _ = writeln!(output, "  |");
             let _ = writeln!(output, "{:>3} | {}", line + 1, line_text);
 

@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::diagnostics::{Diagnostic, Diagnostics, Span};
 use crate::hir::{
     Block, ElseBranch, EnumDef, EnumId, Expr, ExprKind, Field, Function, FunctionId, LocalId,
-    MatchArm, MatchPattern, Param, Program, Stmt, StmtKind, StructDef, StructId, Variant,
+    MatchArm, MatchPattern, Param, PrintItem, Program, Stmt, StmtKind, StructDef, StructId,
+    Variant,
 };
 use crate::parser::ast::{self, AssignOp, BinaryOp, UnaryOp};
 use crate::semantic::symbols::SymbolTable;
@@ -221,10 +222,7 @@ impl Analyzer {
                 if ty.is_unit() {
                     self.diagnostics.error_with_note(
                         field.span,
-                        format!(
-                            "struct field `{}` cannot have unit type `()`",
-                            field.name
-                        ),
+                        format!("struct field `{}` cannot have unit type `()`", field.name),
                         "unit values carry no data and cannot be stored in a struct",
                     );
                 }
@@ -280,7 +278,10 @@ impl Analyzer {
                 self.diagnostics.error_with_note(
                     import.span,
                     "module imports are not implemented yet",
-                    "`use` declarations are parsed, but no module resolver exists in this milestone",
+                    format!(
+                        "`use {}` was parsed, but no module resolver exists in this milestone",
+                        import.path.join("::")
+                    ),
                 );
             }
         }
@@ -319,10 +320,7 @@ impl Analyzer {
                 if ty.is_unit() {
                     self.diagnostics.error_with_note(
                         param.span,
-                        format!(
-                            "parameter `{}` cannot have unit type `()`",
-                            param.name
-                        ),
+                        format!("parameter `{}` cannot have unit type `()`", param.name),
                         "unit values carry no data and cannot be passed as arguments",
                     );
                 }
@@ -347,9 +345,7 @@ impl Analyzer {
                         "the entry point is called by the operating system with no Kern arguments",
                     );
                 }
-                if return_type != Type::Unit
-                    && return_type != Type::I32
-                    && !return_type.is_error()
+                if return_type != Type::Unit && return_type != Type::I32 && !return_type.is_error()
                 {
                     let type_name = self.type_name(&return_type);
                     self.diagnostics.error_with_note(
@@ -388,11 +384,7 @@ impl Analyzer {
         }
     }
 
-    fn find_struct_cycle(
-        &self,
-        id: StructId,
-        path: &mut Vec<StructId>,
-    ) -> Option<Vec<StructId>> {
+    fn find_struct_cycle(&self, id: StructId, path: &mut Vec<StructId>) -> Option<Vec<StructId>> {
         if path.contains(&id) {
             let mut cycle = path.clone();
             cycle.push(id);
@@ -418,11 +410,9 @@ impl Analyzer {
 
         let mut params = Vec::new();
         for param in &function.params {
-            let local = self.symbols.declare_parameter(
-                param.name.clone(),
-                param.ty.clone(),
-                param.span,
-            );
+            let local =
+                self.symbols
+                    .declare_parameter(param.name.clone(), param.ty.clone(), param.span);
             params.push(Param {
                 local,
                 name: param.name.clone(),
@@ -492,10 +482,51 @@ impl Analyzer {
                 self.check_assignment(statement.span, target, *op, value)
             }
             ast::StmtKind::Expr(expr) => StmtKind::Expr(self.check_expr(expr, None)),
-            ast::StmtKind::Print(expr) => {
-                let value = self.check_expr(expr, None);
-                self.check_printable(&value);
-                StmtKind::Print(value)
+            ast::StmtKind::Print { args, newline } => self.check_print(args, *newline),
+            ast::StmtKind::Cin(targets) => {
+                let mut locals = Vec::new();
+                for target in targets {
+                    let (local, ty, mutable) = match &target.kind {
+                        ast::ExprKind::Var(name) => match self.symbols.lookup(name) {
+                            Some(info) => (info.id, info.ty.clone(), info.mutable),
+                            None => {
+                                self.diagnostics.error(
+                                    target.span,
+                                    format!("cannot read into undefined variable `{name}`"),
+                                );
+                                (LocalId(u32::MAX), Type::Error, true)
+                            }
+                        },
+                        _ => {
+                            self.diagnostics
+                                .error(target.span, "cin targets must be local variables");
+                            (LocalId(u32::MAX), Type::Error, true)
+                        }
+                    };
+                    if !mutable {
+                        self.diagnostics.error_with_note(
+                            target.span,
+                            "cannot read into an immutable variable",
+                            "declare it with `let mut` to make it mutable",
+                        );
+                    }
+                    if !ty.is_numeric() && !matches!(ty, Type::Bool | Type::Char) && !ty.is_error()
+                    {
+                        self.diagnostics.error(
+                            target.span,
+                            format!(
+                                "cannot read a value of type `{}` with cin",
+                                self.type_name(&ty)
+                            ),
+                        );
+                    }
+                    if matches!(ty, Type::I128 | Type::U128) {
+                        self.diagnostics
+                            .error(target.span, "cin does not support 128-bit integers");
+                    }
+                    locals.push(local);
+                }
+                StmtKind::Cin(locals)
             }
             ast::StmtKind::If {
                 condition,
@@ -602,9 +633,7 @@ impl Analyzer {
     ) -> StmtKind {
         let declared_type = annotation.map(|ty| self.resolve_type(ty));
         let value = match (&declared_type, value) {
-            (Some(declared), Some(expr)) => {
-                Some(self.check_expr(expr, Some(declared)))
-            }
+            (Some(declared), Some(expr)) => Some(self.check_expr(expr, Some(declared))),
             (None, Some(expr)) => Some(self.check_expr(expr, None)),
             (Some(_), None) => {
                 self.diagnostics.error_with_note(
@@ -671,12 +700,7 @@ impl Analyzer {
     ) -> StmtKind {
         let (local, target_type, mutable, declaration_span) = match &target.kind {
             ast::ExprKind::Var(name) => match self.symbols.lookup(name) {
-                Some(info) => (
-                    info.id,
-                    info.ty.clone(),
-                    info.mutable,
-                    info.span,
-                ),
+                Some(info) => (info.id, info.ty.clone(), info.mutable, info.span),
                 None => {
                     self.diagnostics.error(
                         target.span,
@@ -746,6 +770,155 @@ impl Analyzer {
         StmtKind::Assign { local, value }
     }
 
+    fn check_print(&mut self, args: &[ast::PrintArg], newline: bool) -> StmtKind {
+        let placeholders: Vec<_> = args
+            .iter()
+            .flat_map(|arg| match arg {
+                ast::PrintArg::Template(parts) => parts
+                    .iter()
+                    .filter_map(|part| match part {
+                        ast::TemplatePart::Placeholder { format, span } => Some((*format, *span)),
+                        _ => None,
+                    })
+                    .collect(),
+                ast::PrintArg::Expr(_) => Vec::new(),
+            })
+            .collect();
+        let first_placeholder_arg = args.iter().position(|arg| {
+            matches!(
+                arg,
+                ast::PrintArg::Template(parts)
+                    if parts.iter().any(|part| matches!(part, ast::TemplatePart::Placeholder { .. }))
+            )
+        });
+        let format_args: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter_map(|(index, arg)| match arg {
+                ast::PrintArg::Expr(expr)
+                    if first_placeholder_arg.is_some_and(|first| index > first) =>
+                {
+                    Some(expr)
+                }
+                _ => None,
+            })
+            .collect();
+        let has_placeholders = !placeholders.is_empty();
+
+        if has_placeholders && format_args.len() < placeholders.len() {
+            for (_, placeholder_span) in placeholders.iter().skip(format_args.len()) {
+                self.diagnostics
+                    .error(*placeholder_span, "missing formatting argument");
+            }
+        } else if has_placeholders && format_args.len() > placeholders.len() {
+            self.diagnostics.error(
+                format_args[placeholders.len()].span,
+                "unused formatting argument",
+            );
+        }
+
+        let mut items = Vec::new();
+        let mut format_arg_index = 0;
+        let mut top_level_index = 0;
+        for (arg_index, arg) in args.iter().enumerate() {
+            match arg {
+                ast::PrintArg::Expr(expr)
+                    if !has_placeholders
+                        || first_placeholder_arg.is_some_and(|first| arg_index < first) =>
+                {
+                    let value = self.check_expr(expr, None);
+                    self.check_printable(&value);
+                    items.push(PrintItem::Value {
+                        expr: value,
+                        format: ast::FormatSpec::default(),
+                        separator_before: top_level_index > 0,
+                    });
+                    top_level_index += 1;
+                }
+                ast::PrintArg::Expr(_) => {}
+                ast::PrintArg::Template(parts) => {
+                    let first_part = items.len();
+                    for part in parts {
+                        match part {
+                            ast::TemplatePart::Text(value) => items.push(PrintItem::Text {
+                                value: value.clone(),
+                                separator_before: false,
+                            }),
+                            ast::TemplatePart::Interpolation(expr) => {
+                                let value = self.check_expr(expr, None);
+                                self.check_printable(&value);
+                                items.push(PrintItem::Value {
+                                    expr: value,
+                                    format: ast::FormatSpec::default(),
+                                    separator_before: false,
+                                });
+                            }
+                            ast::TemplatePart::Placeholder { format, span } => {
+                                if let Some(expr) = format_args.get(format_arg_index) {
+                                    let value = self.check_expr(expr, None);
+                                    self.check_printable(&value);
+                                    self.check_format_spec(&value, *format, *span);
+                                    items.push(PrintItem::Value {
+                                        expr: value,
+                                        format: *format,
+                                        separator_before: false,
+                                    });
+                                }
+                                format_arg_index += 1;
+                            }
+                        }
+                    }
+                    if items.len() == first_part {
+                        items.push(PrintItem::Text {
+                            value: String::new(),
+                            separator_before: false,
+                        });
+                    }
+                    if top_level_index > 0 {
+                        match &mut items[first_part] {
+                            PrintItem::Text {
+                                separator_before, ..
+                            }
+                            | PrintItem::Value {
+                                separator_before, ..
+                            } => *separator_before = true,
+                        }
+                    }
+                    top_level_index += 1;
+                }
+            }
+        }
+        StmtKind::Print { items, newline }
+    }
+
+    fn check_format_spec(&mut self, value: &Expr, format: ast::FormatSpec, span: Span) {
+        if value.ty.is_error() {
+            return;
+        }
+        if format.radix.is_some() && !value.ty.is_integer() {
+            self.diagnostics.error(
+                span,
+                format!(
+                    "radix formatting requires an integer, found `{}`",
+                    self.type_name(&value.ty)
+                ),
+            );
+        }
+        if format.precision.is_some() && !value.ty.is_float() {
+            self.diagnostics.error(
+                span,
+                format!(
+                    "precision formatting requires a float, found `{}`",
+                    self.type_name(&value.ty)
+                ),
+            );
+        }
+        if format.zero_pad && !value.ty.is_numeric() {
+            self.diagnostics
+                .error(span, "zero-padding requires a numeric value");
+        }
+    }
+
     fn check_printable(&mut self, value: &Expr) {
         let ok = matches!(
             value.ty,
@@ -802,9 +975,7 @@ impl Analyzer {
                 }
             }
             None => {
-                if !self.current_return_type.is_unit()
-                    && !self.current_return_type.is_error()
-                {
+                if !self.current_return_type.is_unit() && !self.current_return_type.is_error() {
                     let type_name = self.type_name(&self.current_return_type);
                     self.diagnostics.error(
                         span,
@@ -863,9 +1034,8 @@ impl Analyzer {
                     path,
                     span: pattern_span,
                 } => {
-                    let resolved = enum_id.and_then(|id| {
-                        self.resolve_match_variant(id, path, *pattern_span)
-                    });
+                    let resolved =
+                        enum_id.and_then(|id| self.resolve_match_variant(id, path, *pattern_span));
                     match resolved {
                         Some(variant) => {
                             if !covered.insert(variant) {
@@ -877,9 +1047,9 @@ impl Analyzer {
                             } else {
                                 covered_spans.insert(variant, *pattern_span);
                             }
-                            MatchPattern::Variant {
-                                enum_id: enum_id.expect("resolved variant has an enum"),
-                                variant,
+                            match enum_id {
+                                Some(enum_id) => MatchPattern::Variant { enum_id, variant },
+                                None => MatchPattern::Wildcard,
                             }
                         }
                         None => MatchPattern::Wildcard,
@@ -908,10 +1078,7 @@ impl Analyzer {
                     if !missing.is_empty() {
                         self.diagnostics.error_with_note(
                             span,
-                            format!(
-                                "non-exhaustive match: missing {}",
-                                missing.join(", ")
-                            ),
+                            format!("non-exhaustive match: missing {}", missing.join(", ")),
                             "add the missing variants or a `_` arm",
                         );
                     }
@@ -952,7 +1119,11 @@ impl Analyzer {
             );
             return None;
         }
-        match info.variants.iter().position(|variant| variant.name == path[1]) {
+        match info
+            .variants
+            .iter()
+            .position(|variant| variant.name == path[1])
+        {
             Some(index) => Some(index),
             None => {
                 self.diagnostics.error_with_note(
@@ -973,16 +1144,11 @@ impl Analyzer {
                 let actual_name = self.type_name(&hir.ty);
                 self.diagnostics.error(
                     expr.span,
-                    format!(
-                        "type mismatch: expected `{expected_name}`, found `{actual_name}`"
-                    ),
+                    format!("type mismatch: expected `{expected_name}`, found `{actual_name}`"),
                 );
             }
         }
-        hir = Expr {
-            ty: hir.ty,
-            ..hir
-        };
+        hir = Expr { ty: hir.ty, ..hir };
         hir
     }
 
@@ -1031,10 +1197,8 @@ impl Analyzer {
                     span: expr.span,
                 },
                 None => {
-                    self.diagnostics.error(
-                        expr.span,
-                        format!("undefined variable `{name}`"),
-                    );
+                    self.diagnostics
+                        .error(expr.span, format!("undefined variable `{name}`"));
                     Expr {
                         kind: ExprKind::Local(LocalId(u32::MAX)),
                         ty: Type::Error,
@@ -1049,12 +1213,8 @@ impl Analyzer {
             ast::ExprKind::Binary { left, op, right } => {
                 self.check_binary(left, *op, right, expected, expr.span)
             }
-            ast::ExprKind::Call { callee, args } => {
-                self.check_call(callee, args, expr.span)
-            }
-            ast::ExprKind::Field { base, name } => {
-                self.check_field(base, name, expr.span)
-            }
+            ast::ExprKind::Call { callee, args } => self.check_call(callee, args, expr.span),
+            ast::ExprKind::Field { base, name } => self.check_field(base, name, expr.span),
             ast::ExprKind::StructLiteral { name, fields } => {
                 self.check_struct_literal(name, fields, expr.span)
             }
@@ -1112,9 +1272,7 @@ impl Analyzer {
                     let type_name = self.type_name(&ty);
                     self.diagnostics.error(
                         operand.span,
-                        format!(
-                            "unary `-` requires a numeric operand, found `{type_name}`"
-                        ),
+                        format!("unary `-` requires a numeric operand, found `{type_name}`"),
                     );
                 }
                 if ty.is_unsigned_integer() {
@@ -1172,20 +1330,11 @@ impl Analyzer {
 
         let arithmetic = matches!(
             op,
-            BinaryOp::Add
-                | BinaryOp::Sub
-                | BinaryOp::Mul
-                | BinaryOp::Div
-                | BinaryOp::Rem
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
         );
         let comparison = matches!(
             op,
-            BinaryOp::Eq
-                | BinaryOp::Ne
-                | BinaryOp::Lt
-                | BinaryOp::Le
-                | BinaryOp::Gt
-                | BinaryOp::Ge
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
         );
         let ordering = matches!(
             op,
@@ -1239,7 +1388,11 @@ impl Analyzer {
                 note,
             );
         }
-        if ordering && !left_type.is_numeric() && !matches!(left_type, Type::Char) && !left_type.is_error() {
+        if ordering
+            && !left_type.is_numeric()
+            && !matches!(left_type, Type::Char)
+            && !left_type.is_error()
+        {
             self.diagnostics.error(
                 span,
                 format!(
@@ -1278,11 +1431,7 @@ impl Analyzer {
             );
         }
 
-        let result_type = if comparison {
-            Type::Bool
-        } else {
-            left_type
-        };
+        let result_type = if comparison { Type::Bool } else { left_type };
 
         Expr {
             kind: ExprKind::Binary {
@@ -1298,14 +1447,9 @@ impl Analyzer {
     fn check_call(&mut self, callee: &str, args: &[ast::Expr], span: Span) -> Expr {
         let function_id = self.function_names.get(callee).copied();
         let Some(function_id) = function_id else {
-            self.diagnostics.error(
-                span,
-                format!("undefined function `{callee}`"),
-            );
-            let args = args
-                .iter()
-                .map(|arg| self.check_expr(arg, None))
-                .collect();
+            self.diagnostics
+                .error(span, format!("undefined function `{callee}`"));
+            let args = args.iter().map(|arg| self.check_expr(arg, None)).collect();
             return Expr {
                 kind: ExprKind::Call {
                     function: FunctionId(usize::MAX),
@@ -1356,15 +1500,12 @@ impl Analyzer {
         let base_type = base.ty.clone();
         match base_type {
             Type::Struct(struct_id) => {
-                let field = self
-                    .structs
-                    .get(struct_id.0)
-                    .and_then(|info| {
-                        info.fields
-                            .iter()
-                            .position(|field| field.name == name)
-                            .map(|index| (index, info.fields[index].ty.clone(), info.name.clone()))
-                    });
+                let field = self.structs.get(struct_id.0).and_then(|info| {
+                    info.fields
+                        .iter()
+                        .position(|field| field.name == name)
+                        .map(|index| (index, info.fields[index].ty.clone(), info.name.clone()))
+                });
                 match field {
                     Some((index, ty, _struct_name)) => Expr {
                         kind: ExprKind::Field {
@@ -1406,10 +1547,8 @@ impl Analyzer {
             },
             other => {
                 let type_name = self.type_name(&other);
-                self.diagnostics.error(
-                    span,
-                    format!("type `{type_name}` has no fields"),
-                );
+                self.diagnostics
+                    .error(span, format!("type `{type_name}` has no fields"));
                 Expr {
                     kind: ExprKind::Field {
                         base: Box::new(base),
@@ -1422,18 +1561,11 @@ impl Analyzer {
         }
     }
 
-    fn check_struct_literal(
-        &mut self,
-        name: &str,
-        fields: &[ast::FieldInit],
-        span: Span,
-    ) -> Expr {
+    fn check_struct_literal(&mut self, name: &str, fields: &[ast::FieldInit], span: Span) -> Expr {
         let struct_id = self.struct_names.get(name).copied();
         let Some(struct_id) = struct_id else {
-            self.diagnostics.error(
-                span,
-                format!("undefined struct `{name}`"),
-            );
+            self.diagnostics
+                .error(span, format!("undefined struct `{name}`"));
             for field in fields {
                 let _ = self.check_expr(&field.value, None);
             }
@@ -1449,10 +1581,7 @@ impl Analyzer {
         let mut seen: HashMap<String, Span> = HashMap::new();
 
         for init in fields {
-            let field_index = info
-                .fields
-                .iter()
-                .position(|field| field.name == init.name);
+            let field_index = info.fields.iter().position(|field| field.name == init.name);
             match field_index {
                 Some(index) => {
                     if seen.contains_key(&init.name) {
@@ -1470,10 +1599,7 @@ impl Analyzer {
                 None => {
                     self.diagnostics.error_with_note(
                         init.span,
-                        format!(
-                            "struct `{}` has no field `{}`",
-                            info.name, init.name
-                        ),
+                        format!("struct `{}` has no field `{}`", info.name, init.name),
                         "check the field name against the struct declaration",
                     );
                     let _ = self.check_expr(&init.value, None);
@@ -1501,10 +1627,7 @@ impl Analyzer {
             .collect();
 
         Expr {
-            kind: ExprKind::StructLiteral {
-                struct_id,
-                fields,
-            },
+            kind: ExprKind::StructLiteral { struct_id, fields },
             ty: Type::Struct(struct_id),
             span,
         }
@@ -1524,10 +1647,8 @@ impl Analyzer {
             };
         }
         let Some(enum_id) = self.enum_names.get(&path[0]).copied() else {
-            self.diagnostics.error(
-                span,
-                format!("`{}` is not an enum", path[0]),
-            );
+            self.diagnostics
+                .error(span, format!("`{}` is not an enum", path[0]));
             return Expr {
                 kind: ExprKind::Unit,
                 ty: Type::Error,
@@ -1535,7 +1656,11 @@ impl Analyzer {
             };
         };
         let info = self.enums[enum_id.0].clone();
-        match info.variants.iter().position(|variant| variant.name == path[1]) {
+        match info
+            .variants
+            .iter()
+            .position(|variant| variant.name == path[1])
+        {
             Some(variant) => Expr {
                 kind: ExprKind::EnumVariant { enum_id, variant },
                 ty: Type::Enum(enum_id),
@@ -1567,10 +1692,8 @@ impl Analyzer {
             match integer_type_from_suffix(suffix) {
                 Some(ty) => ty,
                 None => {
-                    self.diagnostics.error(
-                        span,
-                        format!("unknown integer suffix `{suffix}`"),
-                    );
+                    self.diagnostics
+                        .error(span, format!("unknown integer suffix `{suffix}`"));
                     expected
                         .filter(|ty| ty.is_integer())
                         .cloned()
@@ -1604,10 +1727,8 @@ impl Analyzer {
             match integer_type_from_suffix(suffix) {
                 Some(ty) => ty,
                 None => {
-                    self.diagnostics.error(
-                        span,
-                        format!("unknown integer suffix `{suffix}`"),
-                    );
+                    self.diagnostics
+                        .error(span, format!("unknown integer suffix `{suffix}`"));
                     expected
                         .filter(|ty| ty.is_integer())
                         .cloned()
@@ -1652,10 +1773,8 @@ impl Analyzer {
             Some("f32") => Type::F32,
             Some("f64") => Type::F64,
             Some(other) => {
-                self.diagnostics.error(
-                    span,
-                    format!("unknown floating-point suffix `{other}`"),
-                );
+                self.diagnostics
+                    .error(span, format!("unknown floating-point suffix `{other}`"));
                 expected
                     .filter(|ty| ty.is_float())
                     .cloned()
@@ -1740,10 +1859,8 @@ impl Analyzer {
                 } else if let Some(id) = self.enum_names.get(name) {
                     Type::Enum(*id)
                 } else {
-                    self.diagnostics.error(
-                        span,
-                        format!("unknown type `{name}`"),
-                    );
+                    self.diagnostics
+                        .error(span, format!("unknown type `{name}`"));
                     Type::Error
                 }
             }
@@ -1770,8 +1887,7 @@ impl Analyzer {
 fn is_builtin_type_name(name: &str) -> bool {
     matches!(
         name,
-        "i8"
-            | "i16"
+        "i8" | "i16"
             | "i32"
             | "i64"
             | "i128"
@@ -1867,18 +1983,14 @@ fn statement_guarantees_return(statement: &Stmt) -> bool {
                 block_guarantees_return(then_block) && block_guarantees_return(block)
             }
             Some(ElseBranch::If(statement)) => {
-                block_guarantees_return(then_block)
-                    && statement_guarantees_return(statement)
+                block_guarantees_return(then_block) && statement_guarantees_return(statement)
             }
             None => false,
         },
         StmtKind::Loop { body } => !block_contains_break(body),
         StmtKind::Block(block) => block_guarantees_return(block),
         StmtKind::Match { arms, .. } => {
-            !arms.is_empty()
-                && arms
-                    .iter()
-                    .all(|arm| block_guarantees_return(&arm.body))
+            !arms.is_empty() && arms.iter().all(|arm| block_guarantees_return(&arm.body))
         }
         _ => false,
     }
@@ -1904,9 +2016,7 @@ fn statement_contains_break(statement: &Stmt) -> bool {
                 }
         }
         StmtKind::Block(block) => block_contains_break(block),
-        StmtKind::Match { arms, .. } => {
-            arms.iter().any(|arm| block_contains_break(&arm.body))
-        }
+        StmtKind::Match { arms, .. } => arms.iter().any(|arm| block_contains_break(&arm.body)),
         // A break inside a nested loop belongs to that loop.
         StmtKind::While { .. } | StmtKind::Loop { .. } | StmtKind::For { .. } => false,
         _ => false,
@@ -1965,7 +2075,11 @@ mod tests {
         );
         let messages = errors(&result);
         assert!(messages.iter().any(|message| message.contains("immutable")));
-        assert!(messages.iter().any(|message| message.contains("undefined variable")));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("undefined variable"))
+        );
     }
 
     #[test]
@@ -1981,8 +2095,16 @@ mod tests {
         "#,
         );
         let messages = errors(&result);
-        assert!(messages.iter().any(|message| message.contains("type mismatch")));
-        assert!(messages.iter().any(|message| message.contains("takes 2 arguments")));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("type mismatch"))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("takes 2 arguments"))
+        );
     }
 
     #[test]
