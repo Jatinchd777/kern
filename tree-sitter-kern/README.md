@@ -31,3 +31,23 @@ see the parent Kern README and the LazyVim configuration under
 `queries/` contains highlight, locals, indentation, and folding queries. Strings
 support `{expression}` interpolation, `{}` positional slots, `{:x}`, `{:X}`,
 `{:b}`, `{:o}`, `{:.N}`, `{:N}`, `{:0N}`, and doubled braces.
+
+## Neovim colors
+
+The LazyVim integration in `~/.config/nvim/lua/plugins/kern.lua` assigns
+Kern-specific Tree-sitter highlight groups, reapplied whenever the colorscheme
+changes:
+
+| Syntax | Highlight group | Color |
+| --- | --- | --- |
+| Function declarations | `@function.kern` | Blue `#61afef` (bold) |
+| Function calls | `@function.call.kern` | Blue `#61afef` |
+| Variables, parameters, and fields | `@variable.kern`, `@variable.parameter.kern`, `@property.kern` | Blue `#61afef` |
+| Kern types | `@type.kern`, `@type.builtin.kern` | Cyan `#56b6c2` |
+| Enum variants | `@constant.kern` | Gold `#e5c07b` |
+
+These are language-specific captures, so the palette does not change highlighting
+in other filetypes. To customize it, edit the corresponding
+`nvim_set_hl` calls in `kern.lua`; the capture names are defined in
+`queries/highlights.scm`. Reopen the buffer or reload the colorscheme to apply
+changes.
